@@ -1,6 +1,7 @@
+python 
 streamlit
+langchain-groq
+python-dotenv
 requests
 isodate
-python-dotenv
-langchain
-langchain_groq
+fpdf
