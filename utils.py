@@ -1,157 +1,120 @@
+import os
+import json
 import isodate
 import requests
+from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
-from dotenv import load_dotenv
+from langchain.schema import AIMessage
+
+# Load environment variables
 load_dotenv()
-import os
-
-# Set your OpenAI API key in the .env file
-groq_api_key = os.getenv("GROQ_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 def fetch_playlist_videos(playlist_url):
-    """
-    Fetch video details from a YouTube playlist using the YouTube Data API.
-    Returns a list of videos with their title and duration.
-    """
-    playlist_id = playlist_url.split("list=")[-1]
-    api_url = f"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={playlist_id}&maxResults=50&key={YOUTUBE_API_KEY}"
+    """Fetch video details from a YouTube playlist."""
+    try:
+        playlist_id = playlist_url.split("list=")[-1]
+        api_url = f"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={playlist_id}&maxResults=50&key={YOUTUBE_API_KEY}"
+        response = requests.get(api_url)
+        response.raise_for_status()
 
-    response = requests.get(api_url)
-    if response.status_code != 200:
-        raise ValueError("Failed to fetch playlist data. Check the playlist URL or API key.")
+        playlist_data = response.json()
+        video_ids = [item['snippet']['resourceId']['videoId'] for item in playlist_data['items']]
 
-    playlist_data = response.json()
-    video_ids = [item['snippet']['resourceId']['videoId'] for item in playlist_data['items']]
+        # Handle pagination
+        while 'nextPageToken' in playlist_data:
+            next_page_token = playlist_data['nextPageToken']
+            api_url = f"{api_url}&pageToken={next_page_token}"
+            response = requests.get(api_url)
+            response.raise_for_status()
+            playlist_data = response.json()
+            video_ids.extend([item['snippet']['resourceId']['videoId'] for item in playlist_data['items']])
 
-    # Fetch video durations
-    videos = []
-    for video_id in video_ids:
-        video_details = fetch_video_details(video_id)
-        if video_details:
-            videos.append(video_details)
+        videos = []
+        for video_id in video_ids:
+            video_details = fetch_video_details(video_id)
+            if video_details:
+                videos.append(video_details)
 
-    return videos
+        return videos
 
+    except requests.exceptions.RequestException as e:
+        raise ValueError(f"Failed to fetch playlist data: {str(e)}")
 
 def fetch_video_details(video_id):
-    """
-    Fetch the title and duration of a YouTube video using the YouTube Data API.
-    """
-    api_url = f"https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id={video_id}&key={YOUTUBE_API_KEY}"
-    response = requests.get(api_url)
-    if response.status_code != 200:
-        return None
+    """Fetch video title and duration from YouTube API."""
+    try:
+        api_url = f"https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id={video_id}&key={YOUTUBE_API_KEY}"
+        response = requests.get(api_url)
+        response.raise_for_status()
 
-    video_data = response.json()
-    if not video_data['items']:
-        return None
+        video_data = response.json()
+        if not video_data['items']:
+            return None
 
-    item = video_data['items'][0]
-    duration = item['contentDetails']['duration']
-    title = item['snippet']['title']
-    return {
-        'title': title,
-        'duration': convert_duration_to_seconds(duration)
-    }
+        item = video_data['items'][0]
+        duration = item['contentDetails']['duration']
+        title = item['snippet']['title']
 
+        return {
+            'title': title,
+            'duration': convert_duration_to_seconds(duration)
+        }
+
+    except requests.exceptions.RequestException as e:
+        raise ValueError(f"Failed to fetch video details: {str(e)}")
 
 def convert_duration_to_seconds(duration):
-    """
-    Convert ISO 8601 duration to seconds.
-    """
+    """Convert ISO 8601 duration to seconds."""
     parsed_duration = isodate.parse_duration(duration)
     return int(parsed_duration.total_seconds())
 
-
-def group_videos_by_topics(videos):
-    """
-    Use LLM to group videos into topics based on their titles.
-
-    Parameters:
-    - videos (list): List of dictionaries containing 'title' and 'duration'.
-
-    Returns:
-    - dict: Grouped videos by topic.
-    """
-
-    if not groq_api_key:
-        raise ValueError("Groq API key not provided. Add it to the .env file.")
-
-    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0, groq_api_key=groq_api_key)
+def clean_json_response(text):
+    """Extract JSON from LLM response with multiple cleanup strategies."""
+    # Remove all markdown code blocks
+    text = text.replace("```json", "").replace("```", "")
     
-    video_titles = [video['title'] for video in videos]
-    titles_text = "\n".join([f"- {title}" for title in video_titles])
+    # Find first [ and last ] to capture the JSON array
+    start_idx = text.find('[')
+    end_idx = text.rfind(']') + 1
+    
+    if start_idx != -1 and end_idx != -1:
+        return text[start_idx:end_idx].strip()
+    return text.strip()
+
+def generate_study_plan(videos, total_days):
+    """Use LLM to intelligently distribute videos across the given days."""
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ API key is missing. Add it to the .env file.")
+
+    llm = ChatGroq(model="llama3-8b-8192", temperature=0, groq_api_key=GROQ_API_KEY)
+
+    video_data = json.dumps(videos, indent=2)
 
     prompt = ChatPromptTemplate.from_template("""
-You are an educational assistant. Categorize the following YouTube video titles into meaningful topics.
-Return the results in JSON format: {{"Topic Name": ["Video 1", "Video 2", ...]}}
+    You are an educational AI. Organize these YouTube videos into a {total_days}-day study plan:
+    - Group related topics
+    - Balance daily workload
+    - Maintain logical flow
 
-Video Titles:
-{titles_text}
+    Videos:
+    {video_data}
+
+    Return ONLY valid JSON in this format:
+    [
+        {{"day": 1, "videos": ["Video 1", "Video 2"]}},
+        {{"day": 2, "videos": ["Video 3"]}},
+        ...
+    ]
     """)
 
-    response = llm.predict(prompt.format_messages(titles_text=titles_text))
+    response = llm.invoke(prompt.format(total_days=total_days, video_data=video_data))
+    response_text = response.content.strip() if isinstance(response, AIMessage) else str(response).strip()
 
     try:
-        grouped_videos = eval(response.strip())  # Convert LLM output to dictionary
-    except:
-        raise ValueError("LLM response format is incorrect. Try again.")
-
-    # Convert video titles to full video dictionaries
-    final_grouped_videos = {}
-    for topic, video_titles in grouped_videos.items():
-        final_grouped_videos[topic] = [video for video in videos if video['title'] in video_titles]
-
-    return final_grouped_videos
-
-
-import random
-
-def generate_study_plan(videos, total_days, videos_per_day):
-    """
-    Generate a study plan where videos are categorized by topic using LLM.
-
-    Parameters:
-    - videos (list): List of video dictionaries.
-    - total_days (int): Number of days to complete the course.
-    - videos_per_day (int): Number of videos per day.
-
-    Returns:
-    - list: Study plan with topic-based distribution.
-    """
-
-    grouped_videos = group_videos_by_topics(videos)
-    topics = list(grouped_videos.keys())
-    study_plan = []
-
-    video_pool = []
-    for topic in topics:
-        video_pool.extend(grouped_videos[topic])
-
-    random.shuffle(video_pool)  # Shuffle for variety
-
-    index = 0
-    for day in range(1, total_days + 1):
-        day_videos = video_pool[index:index + videos_per_day]
-        index += videos_per_day
-
-        # Find the dominant topic of the selected videos
-        dominant_topic = max(grouped_videos.keys(), key=lambda t: sum(1 for v in day_videos if v in grouped_videos[t]))
-
-        study_plan.append({'day': day, 'topic': dominant_topic, 'videos': day_videos})
-
-    return study_plan
-
-
-
-def format_duration(seconds):
-    """
-    Format seconds into HH:MM:SS format.
-    """
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    seconds = seconds % 60
-    return f"{hours:02}:{minutes:02}:{seconds:02}"
+        cleaned_response = clean_json_response(response_text)
+        return json.loads(cleaned_response)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse LLM response: {str(e)}\nRaw response: {response_text}")
