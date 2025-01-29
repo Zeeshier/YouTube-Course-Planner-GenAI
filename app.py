@@ -1,27 +1,43 @@
 import json
 import streamlit as st
 from utils import fetch_playlist_videos, generate_study_plan
+from fpdf import FPDF
+import os
 
-st.set_page_config(page_title="YouTube Study Planner", page_icon="📚", layout="wide")
-st.title("🎥 AI-Powered YouTube Study Planner")
+# Correct page configuration
+st.set_page_config(
+    page_title="🎥YouTube Study Planner 📚",
+    page_icon="📚",
+    layout="wide"
+)
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .day-card {
-        padding: 1rem;
-        margin: 1rem 0;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        background: white;
-    }
-    .video-item {
-        padding: 0.5rem 1rem;
-        margin: 0.25rem 0;
-        border-left: 3px solid #4CAF50;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.title("🎥 AI-Powered YouTube Study Planner 📚")
+
+def create_pdf(study_plan, filename="study_plan.pdf"):
+    """Generate a PDF file from the study plan."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    
+    # Add title
+    pdf.cell(200, 10, txt="Study Plan", ln=True, align="C")
+    pdf.ln(10)
+    
+    # Add each day's plan
+    for day in study_plan:
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt=f"Day {day['day']} - {len(day['videos'])} videos", ln=True)
+        pdf.set_font("Arial", size=10)
+        
+        for video in day["videos"]:
+            # Clean the video title of any problematic characters
+            clean_title = ''.join(char for char in video if ord(char) < 128)
+            pdf.cell(200, 10, txt=f"- {clean_title}", ln=True)
+        pdf.ln(5)
+    
+    # Save the PDF
+    pdf.output(filename, 'F')
+    return filename
 
 def display_study_plan(study_plan):
     """Render study plan in beautiful card layout"""
@@ -30,52 +46,91 @@ def display_study_plan(study_plan):
     
     for day in study_plan:
         with cols[col_idx]:
-            with st.container():
+            st.markdown(f"""
+                <div style="
+                    border: 1px solid #ddd;
+                    border-radius: 10px;
+                    padding: 15px;
+                    margin: 10px 0;
+                    background-color: white;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1)">
+                    <h3 style="color: #1f1f1f;">Day {day['day']}</h3>
+                    <p style="color: #666;">{len(day['videos'])} videos</p>
+                    <div style="margin-top: 10px;">
+                """, 
+                unsafe_allow_html=True
+            )
+            
+            for idx, video in enumerate(day["videos"], 1):
                 st.markdown(f"""
-                <div class="day-card">
-                    <h3>📅 Day {day['day']}</h3>
-                    <p>{len(day['videos'])} videos</p>
-                    <div class="video-list">
-                """, unsafe_allow_html=True)
-                
-                for idx, video in enumerate(day["videos"], 1):
-                    st.markdown(f"""
-                    <div class="video-item">
-                        #{idx} {video}
+                    <div style="
+                        padding: 8px;
+                        margin: 5px 0;
+                        background-color: #f8f9fa;
+                        border-radius: 5px;
+                        font-size: 14px;">
+                        {idx}. {video}
                     </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("</div></div>", unsafe_allow_html=True)
+                """, 
+                unsafe_allow_html=True
+            )
+            
+            st.markdown("</div></div>", unsafe_allow_html=True)
         
         col_idx = (col_idx + 1) % 3
 
 # Input Section
 with st.sidebar:
-    st.header("⚙️ Settings")
-    playlist_url = st.text_input("YouTube Playlist URL:", placeholder="Paste playlist link here...")
-    total_days = st.number_input("Number of Days:", min_value=1, value=7)
+    st.header("Settings")
+    playlist_url = st.text_input(
+        "YouTube Playlist URL:", 
+        placeholder="Paste playlist link here..."
+    )
+    total_days = st.number_input(
+        "Number of Days:", 
+        min_value=1, 
+        value=7
+    )
     st.markdown("---")
-    st.info("💡 Tip: Use a well-organized playlist for best results!")
+    st.info("Tip: Use a well-organized playlist for best results!")
 
 # Main Processing
-if st.button("🚀 Generate Study Plan", use_container_width=True):
+if st.button("Generate Study Plan", use_container_width=True):
     if not playlist_url:
         st.error("Please enter a YouTube playlist URL")
     else:
-        with st.spinner("🔍 Analyzing playlist content..."):
+        with st.spinner("🔍 Fetching playlist data from YouTube..."):
             try:
                 videos = fetch_playlist_videos(playlist_url)
                 if not videos:
                     st.error("No videos found in the playlist")
                     st.stop()
 
-                with st.spinner("🧠 AI is crafting your perfect study plan..."):
+                with st.spinner("🤖 AI is generating your study plan..."):
                     study_plan = generate_study_plan(videos, total_days)
                 
-                st.success("✅ Study Plan Generated Successfully!")
+                st.success("Study Plan Generated Successfully!")
                 st.balloons()
                 display_study_plan(study_plan)
 
+                try:
+                    # Generate and download PDF
+                    pdf_filename = create_pdf(study_plan)
+                    with open(pdf_filename, "rb") as pdf_file:
+                        st.download_button(
+                            label="Download Study Plan (PDF)",
+                            data=pdf_file,
+                            file_name=pdf_filename,
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                    # Clean up the PDF file
+                    if os.path.exists(pdf_filename):
+                        os.remove(pdf_filename)
+                except Exception as pdf_error:
+                    st.warning("Could not generate PDF. Study plan is still available on screen.")
+                    st.error(f"PDF Error: {str(pdf_error)}")
+
             except Exception as e:
-                st.error("⚠️ Error generating study plan")
+                st.error("Error generating study plan")
                 st.error(str(e))
