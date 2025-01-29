@@ -85,36 +85,90 @@ def clean_json_response(text):
     return text.strip()
 
 def generate_study_plan(videos, total_days):
-    """Use LLM to intelligently distribute videos across the given days."""
+    """Use LLM to intelligently distribute videos equally across the given days."""
     if not GROQ_API_KEY:
         raise ValueError("GROQ API key is missing. Add it to the .env file.")
 
     llm = ChatGroq(model="llama3-8b-8192", temperature=0, groq_api_key=GROQ_API_KEY)
-
-    video_data = json.dumps(videos, indent=2)
-
+    
+    # Create a list of video titles
+    video_titles = [video['title'] for video in videos]
+    videos_per_day = len(video_titles) / total_days
+    
     prompt = ChatPromptTemplate.from_template("""
-    You are an educational AI. Organize these YouTube videos into a {total_days}-day study plan:
-    - Group related topics
-    - Balance daily workload
-    - Maintain logical flow
+    You are an educational AI. Organize these {total_videos} YouTube videos into a {total_days}-day study plan.
+    Requirements:
+    1. MUST distribute videos as equally as possible across days
+    2. Each day should have approximately {videos_per_day} videos
+    3. Maintain logical topic sequence
+    4. Keep related topics together when possible
+    5. CRITICAL: Include ALL {total_videos} videos in the plan
+    6. Videos must be distributed within ±1 of the target {videos_per_day} videos per day
 
-    Videos:
-    {video_data}
+    Videos to organize:
+    {video_titles}
 
     Return ONLY valid JSON in this format:
     [
-        {{"day": 1, "videos": ["Video 1", "Video 2"]}},
-        {{"day": 2, "videos": ["Video 3"]}},
+        {{"day": 1, "videos": ["exactly {videos_per_day} videos here"]}},
+        {{"day": 2, "videos": ["exactly {videos_per_day} videos here"]}},
         ...
     ]
+
+    Verify before responding:
+    1. Each day has {videos_per_day} videos (±1)
+    2. All {total_videos} videos are included
+    3. No videos are duplicated
+    4. No videos are missing
     """)
 
-    response = llm.invoke(prompt.format(total_days=total_days, video_data=video_data))
+    response = llm.invoke(
+        prompt.format(
+            total_days=total_days,
+            video_titles=json.dumps(video_titles, indent=2),
+            total_videos=len(video_titles),
+            videos_per_day=round(videos_per_day, 1)
+        )
+    )
+    
     response_text = response.content.strip() if isinstance(response, AIMessage) else str(response).strip()
 
     try:
         cleaned_response = clean_json_response(response_text)
-        return json.loads(cleaned_response)
+        study_plan = json.loads(cleaned_response)
+        
+        # Verify the study plan meets requirements
+        total_assigned = sum(len(day['videos']) for day in study_plan)
+        videos_set = set()
+        for day in study_plan:
+            videos_set.update(day['videos'])
+            
+        # Check if any videos are missing
+        all_videos_set = set(video_titles)
+        missing_videos = all_videos_set - videos_set
+        extra_videos = videos_set - all_videos_set
+        
+        if missing_videos or extra_videos or total_assigned != len(video_titles):
+            # Redistribute if there are any issues
+            videos_copy = video_titles.copy()
+            base_per_day = len(videos_copy) // total_days
+            extra = len(videos_copy) % total_days
+            
+            study_plan = []
+            start_idx = 0
+            
+            for day in range(1, total_days + 1):
+                videos_today = base_per_day + (1 if day <= extra else 0)
+                end_idx = start_idx + videos_today
+                
+                study_plan.append({
+                    "day": day,
+                    "videos": videos_copy[start_idx:end_idx]
+                })
+                
+                start_idx = end_idx
+        
+        return study_plan
+    
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse LLM response: {str(e)}\nRaw response: {response_text}")
