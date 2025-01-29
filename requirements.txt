@@ -1,7 +1,8 @@
-python 
-streamlit
-langchain-groq
-python-dotenv
-requests
+json
 isodate
+requests
+python-dotenv
+langchain
+langchain_groq
+streamlit
 fpdf
