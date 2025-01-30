@@ -13,13 +13,18 @@ st.set_page_config(
 
 st.title("🎥 AI-Powered YouTube Study Planner 📚")
 
-def create_pdf(study_plan, filename="study_plan.pdf"):
+def create_pdf(study_plan, course_name, filename="study_plan.pdf"):
     """Generate a PDF file from the study plan."""
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
     
-    # Add title
+    # Add course name with larger font
+    pdf.set_font("Arial", 'B', size=24)
+    pdf.cell(200, 20, txt=course_name, ln=True, align="C")
+    pdf.ln(10)
+    
+    # Add "Study Plan" subtitle
+    pdf.set_font("Arial", size=16)
     pdf.cell(200, 10, txt="Study Plan", ln=True, align="C")
     pdf.ln(10)
     
@@ -39,8 +44,22 @@ def create_pdf(study_plan, filename="study_plan.pdf"):
     pdf.output(filename, 'F')
     return filename
 
-def display_study_plan(study_plan):
+def display_study_plan(study_plan, course_name):
     """Render study plan in beautiful card layout"""
+    # Display course name prominently
+    st.markdown(f"""
+        <h1 style="
+            text-align: center;
+            color: #1f1f1f;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 10px;">
+            {course_name}
+        </h1>
+    """, unsafe_allow_html=True)
+    
     cols = st.columns(3)
     col_idx = 0
     
@@ -82,6 +101,11 @@ def display_study_plan(study_plan):
 # Input Section
 with st.sidebar:
     st.header("Settings")
+    course_name = st.text_input(
+        "Course Name:",
+        placeholder="Enter course name...",
+        help="Enter the name of your course or study topic"
+    )
     playlist_url = st.text_input(
         "YouTube Playlist URL:", 
         placeholder="Paste playlist link here..."
@@ -98,6 +122,8 @@ with st.sidebar:
 if st.button("Generate Study Plan", use_container_width=True):
     if not playlist_url:
         st.error("Please enter a YouTube playlist URL")
+    elif not course_name:
+        st.error("Please enter a course name")
     else:
         with st.spinner("🔍 Fetching playlist data from YouTube..."):
             try:
@@ -111,11 +137,11 @@ if st.button("Generate Study Plan", use_container_width=True):
                 
                 st.success("Study Plan Generated Successfully!")
                 st.balloons()
-                display_study_plan(study_plan)
+                display_study_plan(study_plan, course_name)
 
                 try:
                     # Generate and download PDF
-                    pdf_filename = create_pdf(study_plan)
+                    pdf_filename = create_pdf(study_plan, course_name)
                     with open(pdf_filename, "rb") as pdf_file:
                         st.download_button(
                             label="Download Study Plan (PDF)",
