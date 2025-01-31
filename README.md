@@ -2,6 +2,9 @@
 
 An AI-powered tool that transforms YouTube playlists into structured study plans using LangChain and Groq LLM. Perfect for online courses, tutorials, and educational content.
 
+
+![Image Description](data/image.png)  
+
 ## 🌟 Features
 
 * **Intelligent Video Distribution**: Uses AI to organize videos into logical, balanced study sessions  
