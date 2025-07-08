@@ -6,4 +6,4 @@ langchain
 langchain_groq
 streamlit
 fpdf
-pip
+pip=25.1.1
