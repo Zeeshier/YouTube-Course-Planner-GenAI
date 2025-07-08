@@ -6,3 +6,4 @@ langchain
 langchain_groq
 streamlit
 fpdf
+pip
